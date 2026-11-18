@@ -39,7 +39,7 @@ def download_tess_data(tic_id):
 
 if check_password():
     # 🔑 填入你的真实 API Key
-    ZHIPU_API_KEY = "你的智谱Key粘贴在这里"  
+    ZHIPU_API_KEY = "ebe2cfe96ecd4ed08adc2d9054349c7f.yZBRP0B46y0g3Nb7"  
     BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 
     with st.sidebar:
