@@ -39,7 +39,7 @@ def download_tess_data(tic_id):
 
 if check_password():
     # 🔑 填入你的真实 API Key
-    ZHIPU_API_KEY = "ebe2cfe96ecd4ed08adc2d9054349c7f.yZBRP0B46y0g3Nb7"  
+    ZHIPU_API_KEY = "你的智谱Key粘贴在这里"  
     BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 
     with st.sidebar:
@@ -69,7 +69,17 @@ if check_password():
         st.subheader("📊 真实 TESS 观测数据与周期图")
         if "lc" in st.session_state:
             lc = st.session_state.lc
-            lc_flat = lc.flatten(window_length=window_length)
+            
+            # 动态计算安全的窗口长度，防止报错
+            n_points = len(lc)
+            calc_len = int(window_length * 720) 
+            if calc_len % 2 == 0: calc_len += 1 
+            safe_window = min(calc_len, max(5, (n_points // 5) | 1))
+            
+            try:
+                lc_flat = lc.flatten(window_length=safe_window)
+            except Exception:
+                lc_flat = lc.flatten(window_length=min(101, (n_points // 2) | 1))
             
             fig_lc = go.Figure()
             fig_lc.add_trace(go.Scatter(x=lc.time.value, y=lc.flux.value, mode='markers', marker=dict(size=2, color='gray'), name='原始观测'))
