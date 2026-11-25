@@ -9,9 +9,12 @@ import base64
 from scipy.ndimage import median_filter
 from duckduckgo_search import DDGS
 from streamlit_mic_recorder import speech_to_text
+import requests
+from PIL import Image
+from io import BytesIO
 
 # ==========================================
-# 1. 页面设置：浅色、高效双栏
+# 1. 页面设置
 # ==========================================
 st.set_page_config(page_title="星鉴 AstroFusion", layout="wide")
 
@@ -45,7 +48,7 @@ def check_password():
     return True
 
 # ==========================================
-# 3. 核心功能与图像搜索
+# 3. 核心功能与图像防拦截搜索
 # ==========================================
 @st.cache_data(show_spinner=False)
 def download_tess_data(tic_id):
@@ -59,18 +62,7 @@ def download_tess_data(tic_id):
         return lc[mask]
     except Exception: return None
 
-def estimate_physical_params(period_days):
-    try:
-        a_au = (1.5 * (period_days / 365.25)**2)**(1/3)
-        a_rsun = a_au * 215.0 
-        radius = a_rsun * 0.2 
-        temp = max(4000, min(5500 + (1.0 - period_days) * 1000, 8000))
-        mass = max(0.1, min((radius / 1.0)**1.2, 5.0))
-        return {"a": round(a_rsun, 2), "r": round(radius, 2), "t": round(temp, 0), "m": round(mass, 2)}
-    except: return None
-
 def internet_search(query):
-    """全网文献搜索"""
     try:
         results = DDGS().text(f"{query} astronomy", max_results=3)
         return "【文献】\n" + "\n".join([f"- {r['title']}: {r['body']}" for r in results]) if results else "无文献"
@@ -79,11 +71,23 @@ def internet_search(query):
 def image_search(query):
     """全网真实图像检索"""
     try:
-        # 增加 astronomy 关键词确保图片相关性
         results = DDGS().images(f"{query} astronomy", max_results=2)
         return [r['image'] for r in results] if results else []
     except Exception:
         return []
+
+def safe_render_image(url):
+    """带有防拦截下载的图片渲染器"""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content))
+            st.image(img, use_column_width=True)
+        else:
+            st.caption("*(图片受源站防盗链限制，加载失败)*")
+    except Exception:
+        st.caption("*(图片链接已失效)*")
 
 # ==========================================
 # 4. 主程序
@@ -103,8 +107,7 @@ if check_password():
         fast_period = st.number_input("FAST 射电周期 (天)", value=0.0, format="%.3f")
         
         if st.button("🚀 启动核心分析", use_container_width=True):
-            if not tic_input:
-                st.error("请输入 TIC 编号！")
+            if not tic_input: st.error("请输入 TIC 编号！")
             else:
                 with st.spinner("从 NASA 获取数据..."):
                     lc_data = download_tess_data(tic_input)
@@ -138,7 +141,6 @@ if check_password():
             half_p = best_period / 2.0
             half_power = power[np.argmin(np.abs(period - half_p))]
             
-            # 绘图
             fig_lc = go.Figure()
             fig_lc.add_trace(go.Scattergl(x=time_arr, y=flux_arr, mode='markers', marker=dict(size=2, color='gray'), name='原始'))
             fig_lc.add_trace(go.Scattergl(x=time_arr, y=flux_flat, mode='markers', marker=dict(size=2, color='#3B82F6'), name='去趋势'))
@@ -150,7 +152,6 @@ if check_password():
             fig_pg.update_layout(title="周期图", height=250, template="plotly_white", xaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_pg, use_container_width=True)
             
-            # 诊断标签
             st.markdown("### 🩺 诊断报告")
             if len(time_arr) < 500:
                 st.error("🚫 **insufficient_evidence**：数据点过少，拒判。")
@@ -162,7 +163,6 @@ if check_password():
                 st.success(f"✅ **consistent**：最佳周期 {best_period:.4f} 天，无异常。")
                 st.session_state.tag = "consistent"
                 
-            # 相位折叠图
             st.markdown("### 🔭 相位折叠图")
             phase = (time_arr / best_period) % 1.0
             phase[phase > 0.5] -= 1.0 
@@ -182,11 +182,9 @@ if check_password():
 
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
-                # 如果历史记录里包含图片 URL 列表，渲染出来
                 if "image_urls" in msg and msg["image_urls"]:
-                    cols = st.columns(len(msg["image_urls"]))
-                    for i, url in enumerate(msg["image_urls"]):
-                        with cols[i]: st.image(url, use_column_width=True)
+                    for url in msg["image_urls"]:
+                        safe_render_image(url) # 使用安全下载器
                 st.markdown(msg["content"])
                 
         prompt = st.chat_input("输入科研问题或索要图片...")
@@ -205,18 +203,17 @@ if check_password():
                 search_context = ""
                 img_urls = []
                 
-                # 1. 智能判断：用户是不是在要图片？
+                # 智能搜图
                 img_keywords = ["图", "图片", "照片", "影像", "画"]
                 if not uploaded_file and any(k in prompt for k in img_keywords):
                     with st.spinner("🌐 正在全网抓取天文图像..."):
                         img_urls = image_search(prompt)
                         if img_urls:
-                            cols = st.columns(len(img_urls))
-                            for i, url in enumerate(img_urls):
-                                with cols[i]: st.image(url, use_column_width=True)
+                            for url in img_urls:
+                                safe_render_image(url)
                             search_context += "\n【系统提示：已经为用户实时展示相关图片】"
                 
-                # 2. 联网文献检索
+                # 检索文献
                 elif not uploaded_file and ("文献" in prompt or "查一下" in prompt):
                     with st.spinner("🌐 正在检索全网文献..."):
                         search_context = internet_search(prompt)
@@ -225,7 +222,8 @@ if check_password():
                 if "period" in st.session_state:
                     context += f"【当前TIC数据】光学周期 {st.session_state.period:.4f} 天，标签 {st.session_state.tag}。"
 
-                sys_prompt = f"你是资深天文学家。{context} 请专业回答。输出格式：先输出【深度思考过程】，再输出【最终解答】。公式用 $$ 包裹。"
+                # 严禁AI输出Markdown图片语法，防止双图冲突
+                sys_prompt = f"你是资深天文学家。{context} 请专业回答。输出格式：先输出【深度思考过程】，再输出【最终解答】。公式用 $$ 包裹。严禁在回答中使用 ![图片] 的Markdown语法。"
 
                 try:
                     client = OpenAI(api_key=ZHIPU_API_KEY, base_url=BASE_URL)
@@ -258,7 +256,7 @@ if check_password():
                     st.session_state.messages.append({
                         "role": "assistant", 
                         "content": reply if not uploaded_file else res.choices[0].message.content,
-                        "image_urls": img_urls  # 保存图片URL以便历史记录回显
+                        "image_urls": img_urls
                     })
                     st.rerun()
                 except Exception as e:
