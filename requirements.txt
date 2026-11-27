@@ -3,5 +3,6 @@ streamlit
 lightkurve
 plotly
 scipy
-streamlit-mic-recorder
+astropy
 duckduckgo-search
+streamlit-mic-recorder
