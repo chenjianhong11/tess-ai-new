@@ -6,3 +6,7 @@ scipy
 astropy
 duckduckgo-search
 streamlit-mic-recorder
+numpy
+pandas
+requests
+pillow
