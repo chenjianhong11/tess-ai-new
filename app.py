@@ -63,12 +63,15 @@ def download_tess_data(tic_id):
 
 def run_multi_algorithms(time_arr, flux_flat, min_p=0.2, max_p=5.0):
     freq = np.linspace(1/max_p, 1/min_p, 2000)
+    
+    # LS 算法
     ls = LombScargle(time_arr, flux_flat - np.mean(flux_flat))
     power_ls = ls.power(freq)
     best_ls_idx = np.argmax(power_ls)
     p_ls = 1 / freq[best_ls_idx]
     max_p_ls = power_ls[best_ls_idx]
     
+    # BLS 算法
     try:
         bls = BoxLeastSquares(time_arr, flux_flat)
         durations = np.linspace(0.05, 0.2, 5)
@@ -77,6 +80,7 @@ def run_multi_algorithms(time_arr, flux_flat, min_p=0.2, max_p=5.0):
     except Exception:
         p_bls = p_ls 
     
+    # 半周期校验
     half_p = p_ls / 2.0
     half_idx = np.argmin(np.abs(1/freq - half_p))
     half_power = power_ls[half_idx]
@@ -126,18 +130,19 @@ if check_password():
 
     tab1, tab2 = st.tabs(["📊 核心诊断与冲突识别", "📦 批量与导出 (原型)"])
 
-    # ======== TAB 1: 核心诊断与对话 (修复了分栏布局) ========
+    # ======== TAB 1: 核心诊断与 AI 对话 ========
     with tab1:
-        # 强制划分左右两栏，确保右侧的输入框永远存在
+        # 强制左右双栏，保证右侧输入框永远存在
         col_left, col_right = st.columns([1.3, 1])
 
-        # ---- 左侧：数据诊断区 ----
+        # ---- 左侧：数据分析与图表 ----
         with col_left:
             if "lc" in st.session_state and st.session_state.lc is not None:
                 lc = st.session_state.lc
                 time_arr = lc.time.value
                 flux_arr = lc.flux.value
                 
+                # 去趋势
                 window_points = int(window_length * 720)
                 if window_points % 2 == 0: window_points += 1
                 trend = median_filter(flux_arr, size=window_points, mode='nearest')
@@ -145,17 +150,18 @@ if check_password():
                 
                 p_ls, p_bls, max_p_ls, half_power, freq, power_ls = run_multi_algorithms(time_arr, flux_flat)
                 
+                # 诊断逻辑
                 is_insufficient = len(time_arr) < 500 or np.std(flux_flat) < 0.001
                 is_half_period = half_power > max_p_ls * 0.7
                 
-                # 1. 光变曲线
+                # 光变曲线
                 fig_lc = go.Figure()
                 fig_lc.add_trace(go.Scattergl(x=time_arr, y=flux_arr, mode='markers', marker=dict(size=2, color='#CBD5E1'), name='原始'))
                 fig_lc.add_trace(go.Scattergl(x=time_arr, y=flux_flat, mode='markers', marker=dict(size=2, color='#3B82F6'), name='去趋势'))
                 fig_lc.update_layout(title="TESS 光变曲线", height=250, template="plotly_white", margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig_lc, use_container_width=True)
                 
-                # 2. 周期谱
+                # 周期谱 (标注峰值)
                 fig_pg = go.Figure()
                 fig_pg.add_trace(go.Scatter(x=1/freq, y=power_ls, mode='lines', line=dict(color='#F59E0B'), name='LS Power'))
                 fig_pg.add_vline(x=p_ls, line_dash="dash", line_color="#EF4444", annotation_text=f"主峰 P")
@@ -164,17 +170,18 @@ if check_password():
                 fig_pg.update_layout(title="周期谱与候选峰", height=250, template="plotly_white", xaxis=dict(autorange="reversed"), margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig_pg, use_container_width=True)
                 
-                # 3. 相位折叠图
+                # 相位折叠与残差
                 phase = (time_arr / p_ls) % 1.0
                 phase[phase > 0.5] -= 1.0
                 residual = flux_flat - np.mean(flux_flat)
+                
                 fig_phase = sp.make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
                 fig_phase.add_trace(go.Scattergl(x=phase, y=flux_flat, mode='markers', marker=dict(size=2, color='#000000')), row=1, col=1)
                 fig_phase.add_trace(go.Scattergl(x=phase, y=residual, mode='markers', marker=dict(size=2, color='#EF4444')), row=2, col=1)
                 fig_phase.update_layout(height=350, template="plotly_white", title="相位折叠与残差", showlegend=False, margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig_phase, use_container_width=True)
 
-                # 4. 候选表格与诊断
+                # 诊断表格与结论
                 st.markdown("### 🩺 多候选周期与冲突诊断")
                 df_candidates = pd.DataFrame({
                     "算法": ["Lomb-Scargle", "BLS (Box)", "谐波校验 (P/2)"],
@@ -195,21 +202,19 @@ if check_password():
                 
                 st.session_state.period = p_ls
             else:
-                st.info("👈 请在左侧输入 TIC 编号并点击「启动核心分析」获取真实数据。")
+                st.info("👈 请在左侧侧边栏输入 TIC 编号并点击「启动核心分析」。")
 
-        # ---- 右侧：AI 聊天区 (始终存在) ----
+        # ---- 右侧：AI 对话区 ----
         with col_right:
             st.subheader("💬 科研 Agent 对话")
             
             if "messages" not in st.session_state:
                 st.session_state.messages = [{"role": "assistant", "content": "你好！我是星鉴 AI。你可以直接向我提问，或者先在左侧下载数据，再让我根据数据进行分析。"}]
             
-            # 渲染历史对话
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): 
                     st.markdown(msg["content"])
                     
-            # 底部输入框
             prompt = st.chat_input("输入科研问题...")
             if voice_text and not prompt: 
                 prompt = voice_text
@@ -229,12 +234,22 @@ if check_password():
                         with st.spinner("🌐 正在全网检索..."):
                             search_context = internet_search(prompt)
                     
-                    # 如果存在数据，就把数据信息喂给大模型
                     context = f"{search_context}\n"
                     if "period" in st.session_state:
                         context += f"【当前数据】TIC {st.session_state.tic}，光学周期 {st.session_state.period:.4f} 天，标签 {st.session_state.tag}。"
                     
-                    sys_prompt = f"你是资深天文学家。{context} 请专业回答。输出格式：先输出【深度思考过程】，再输出【最终解答】。公式用 $$ 包裹。"
+                    # ⚠️ 核心提示词：强制输出标准 LaTeX 公式
+                    sys_prompt = f"""
+                    你是一个资深天文学家。{context} 请专业回答。
+                    
+                    【必须遵守的排版规则】：
+                    1. 先输出【深度思考过程】，再输出【最终解答】。
+                    2. **所有数学公式必须直接使用 LaTeX 语法（在网页端会被渲染成教科书般的标准书写体）。**
+                    3. **绝对禁止**使用带有反斜杠的括号如 `\\[` 或 `\\(` 来包裹公式。
+                    4. 独立公式请直接使用前后双美元符号：$$ E = mc^2 $$
+                    5. 行内公式请直接使用前后单美元符号：$ F = G \\frac{{m_1 m_2}}{{r^2}} $
+                    6. **绝对禁止**将公式放在代码块（如 ```python ... ```）中输出，必须直接作为文本输出以便渲染。
+                    """
 
                     try:
                         client = OpenAI(api_key=ZHIPU_API_KEY, base_url=BASE_URL)
@@ -246,7 +261,7 @@ if check_password():
                             st.markdown(res.choices[0].message.content)
                         else:
                             with st.status("🧠 AI 正在深度推理...", expanded=True) as status:
-                                st.write("解析上下文与证据...")
+                                st.write("解析上下文与公式排版...")
                                 status.update(label="推理完成：", state="complete", expanded=False)
                             
                             def generate_chunks():
